@@ -17,8 +17,12 @@ def getText(nodelist):
   return ''.join(rc)
 
 def getRssItemPubDateTime(item):
-  pubDate = getText(item.getElementsByTagName('pubDate')[0].childNodes)
-  return datetime.datetime.fromtimestamp(email.utils.mktime_tz(email.utils.parsedate_tz(pubDate)))
+  pubDates = item.getElementsByTagName('pubDate')
+  if len(pubDates) > 0:
+    pubDate = getText(item.getElementsByTagName('pubDate')[0].childNodes)
+    return datetime.datetime.fromtimestamp(email.utils.mktime_tz(email.utils.parsedate_tz(pubDate)))
+  else:
+    return None
 
 def getRssItemTitle(item):
   return getText(item.getElementsByTagName('title')[0].childNodes)
@@ -36,15 +40,24 @@ def getRssDocFromURL(url):
   try:
     response = urlfetch.fetch(url)
     xml = parseString(response.content)
-  except:
-    pass
+  except Exception as ex:
+    logging.error('could not retrieve or parse content from ' + url)
   return xml
 
 def tweetItem(feedTitle, title, link):
-  auth = tweepy.OAuthHandler(twitter_token.CONSUMER_KEY, twitter_token.CONSUMER_SECRET)
-  auth.set_access_token(twitter_token.ACCESS_KEY, twitter_token.ACCESS_SECRET)
-  api = tweepy.API(auth)
-  api.update_status(feedTitle + ' > ' + title + ' ' + link)
+  # title = 140 max - 20 (url) - feedTitle length - 5 separation chars
+  title = title[0:140 - 20 - len(feedTitle) - 5]
+  message = feedTitle + ' > ' + title + ' ' + link
+  
+  logging.info('Tweeting message [' + message + ']')
+
+  try:
+    auth = tweepy.OAuthHandler(twitter_token.CONSUMER_KEY, twitter_token.CONSUMER_SECRET)
+    auth.set_access_token(twitter_token.ACCESS_KEY, twitter_token.ACCESS_SECRET)
+    api = tweepy.API(auth)
+    api.update_status(message)
+  except Exception as ex:
+    logging.error('Could not tweet message [' + message + ']')
 
 
 class Feed(db.Model):
@@ -68,21 +81,21 @@ def init_db():
     'http://feeds.feedburner.com/nczonline ',
     'http://feeds.feedburner.com/PerfectionKills',
     'http://feeds.feedburner.com/SoftwareIsHard',
-    'http://www.webmonkey.com/feed/'
+    'http://www.webmonkey.com/feed/',
+    'http://feeds.feedburner.com/alistapart/main'
   ]
 
   for feed in feeds:
-    Feed(url=feed, last_check=datetime.datetime.now()).put()
+    # If feed not already in the DB, add it now
+    if len(Feed.all().filter("url =", feed).fetch(1)) == 0:
+      Feed(url=feed, last_check=datetime.datetime.now()).put()
 
 
 class CheckFeedsHandler(webapp2.RequestHandler):
   def get(self):
-    feeds = Feed.all()
-    
-    if feeds.count() == 0:
-      init_db()
+    init_db()
 
-    for feed in feeds:
+    for feed in Feed.all():
       xml = getRssDocFromURL(feed.url)
       if xml:
         items = xml.getElementsByTagName('item')
@@ -90,7 +103,7 @@ class CheckFeedsHandler(webapp2.RequestHandler):
         
         for item in items:
           pubDateTime = getRssItemPubDateTime(item)
-          if pubDateTime > feed.last_check:
+          if pubDateTime and pubDateTime > feed.last_check:
             tweetItem(title, getRssItemTitle(item), getRssItemLink(item))
         
         feed.last_check = datetime.datetime.now()

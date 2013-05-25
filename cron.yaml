@@ -1,4 +1,4 @@
 cron:
 - description: daily chicken feeding
   url: /checkfeeds
-  schedule: every 24 hours
+  schedule: every 2 hours
